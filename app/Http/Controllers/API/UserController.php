@@ -9,71 +9,106 @@ use Illuminate\Http\JsonResponse;
 class UserController extends Controller
 {
     /**
-     * Get a JWT via given credentials.
+     * Handle the login request and return a JWT.
      *
-     * @param Request $request
-     * @return JsonResponse
+     * @param \Illuminate\Http\Request $request
+     * @return \Illuminate\Http\JsonResponse
      */
     public function createToken(Request $request): JsonResponse
     {
-        $this->validateRequest($request);
-
-        $credentials = $request->only(['email', 'password']);
+        $credentials = $this->validateLogin($request);
 
         if (!$token = auth('api')->attempt($credentials)) {
-            return response()->json(['error' => 'Unauthorized'], 401);
+            return $this->errorResponse('Unauthorized', 401);
         }
 
         return $this->respondWithToken($token);
     }
 
     /**
-     * Get the authenticated User.
+     * Return the authenticated user.
      *
-     * @return JsonResponse
+     * @return \Illuminate\Http\JsonResponse
      */
     public function me(): JsonResponse
     {
-        return response()->json(auth()->user());
+        $user = auth()->user();
+
+        return $this->successResponse('Authenticated user retrieved successfully', [
+            'user' => $user,
+        ]);
     }
 
     /**
-     * Refresh an authentication token.
+     * Refresh the current authentication token and return the new token.
      *
-     * @return JsonResponse
+     * @return \Illuminate\Http\JsonResponse
      */
     public function refreshToken(): JsonResponse
     {
         $newToken = auth('api')->refresh();
+
         return $this->respondWithToken($newToken);
     }
 
     /**
-     * Get the token array structure.
+     * Validate the login request.
      *
-     * @param string $token
-     * @return JsonResponse
+     * @param \Illuminate\Http\Request $request
+     * @return array
      */
-    protected function respondWithToken(string $token): JsonResponse
+    protected function validateLogin(Request $request): array
     {
-        return response()->json([
-            'access_token' => $token,
-            'token_type' => 'Bearer',
-            'expires_in' => auth('api')->factory()->getTTL() * 60
+        return $request->validate([
+            'email' => 'required|email',
+            'password' => 'required|string',
         ]);
     }
 
     /**
-     * Validate the request for token creation.
+     * Format and return the JWT token in a consistent response format.
      *
-     * @param Request $request
-     * @return void
+     * @param string $token
+     * @return \Illuminate\Http\JsonResponse
      */
-    protected function validateRequest(Request $request): void
+    protected function respondWithToken(string $token): JsonResponse
     {
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required|string',
+        return $this->successResponse('Token generated successfully', [
+            'access_token' => $token,
+            'token_type' => 'Bearer',
+            'expires_in' => auth('api')->factory()->getTTL() * 60,
         ]);
+    }
+
+    /**
+     * Return a success JSON response with a customizable message.
+     *
+     * @param string $message
+     * @param array $data
+     * @param int $statusCode
+     * @return \Illuminate\Http\JsonResponse
+     */
+    protected function successResponse(string $message, array $data = [], int $statusCode = 200): JsonResponse
+    {
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'data' => $data,
+        ], $statusCode);
+    }
+
+    /**
+     * Return an error JSON response with a customizable message.
+     *
+     * @param string $message
+     * @param int $statusCode
+     * @return \Illuminate\Http\JsonResponse
+     */
+    protected function errorResponse(string $message, int $statusCode): JsonResponse
+    {
+        return response()->json([
+            'success' => false,
+            'message' => $message,
+        ], $statusCode);
     }
 }

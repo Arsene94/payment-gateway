@@ -10,36 +10,46 @@ use Illuminate\Support\Facades\Log;
 class MockStripeController extends Controller
 {
     /**
-     * Simulate a mock API endpoint for processing payments.
+     * Handle the mock webhook API for processing payments.
      *
-     * @param Request $request
+     * @param \Illuminate\Http\Request $request
      * @return \Illuminate\Http\JsonResponse
      */
     public function handleWebhook(Request $request)
     {
-        $payload = $request->all();
+        $validatedData = $this->validateWebhookRequest($request);
 
-        if (empty($payload['order_id'])) {
-            return $this->respondWithError('Invalid payload', 400);
-        }
-
-        $order = Order::find($payload['order_id']);
+        $order = Order::with('transaction')->find($validatedData['order_id']);
         if (!$order) {
             return $this->respondWithError('Order not found', 404);
         }
 
         $status = $this->simulatePaymentStatus();
-        $this->updateOrderStatus($order, $status);
+        $this->updateOrderAndTransactionStatus($order, $status);
 
-        return $status === OrderStatusEnum::PAID
-            ? $this->respondWithSuccess($status->label(), $status->value, 200)
-            : $this->respondWithError($status->label(), 400, $status->value);
+        return match ($status) {
+            OrderStatusEnum::PAID => $this->respondWithSuccess('Payment succeeded.', $status->value),
+            default => $this->respondWithError('Payment failed.', 400, $status->value),
+        };
     }
 
     /**
-     * Simulate payment status based on random logic.
+     * Validate the incoming webhook request.
      *
-     * @return OrderStatusEnum
+     * @param \Illuminate\Http\Request $request
+     * @return array
+     */
+    private function validateWebhookRequest(Request $request): array
+    {
+        return $request->validate([
+            'order_id' => 'required|integer|exists:orders,id',
+        ]);
+    }
+
+    /**
+     * Simulate payment status using random logic.
+     *
+     * @return \App\Enums\OrderStatusEnum
      */
     private function simulatePaymentStatus(): OrderStatusEnum
     {
@@ -47,29 +57,30 @@ class MockStripeController extends Controller
     }
 
     /**
-     * Update the status of the order.
+     * Update the status of the order and its transaction.
      *
-     * @param Order $order
-     * @param OrderStatusEnum $status
+     * @param \App\Models\Order $order
+     * @param \App\Enums\OrderStatusEnum $status
      * @return void
      */
-    private function updateOrderStatus(Order $order, OrderStatusEnum $status): void
+    private function updateOrderAndTransactionStatus(Order $order, OrderStatusEnum $status): void
     {
         $order->update(['status' => $status->value]);
-        $transaction = $order->transaction;
-        $transaction->status = $status->value;
-        $transaction->save();
 
+        if ($order->transaction) {
+            $order->transaction->update(['status' => $status->value]);
+        }
 
-        Log::info('Order status updated', [
+        Log::info('Order and transaction status updated.', [
             'order_id' => $order->id,
+            'transaction_id' => $order->transaction?->id,
             'status' => $status->value,
             'label' => $status->label(),
         ]);
     }
 
     /**
-     * Respond with a success message.
+     * Respond with a success JSON response.
      *
      * @param string $message
      * @param string $status
@@ -85,7 +96,7 @@ class MockStripeController extends Controller
     }
 
     /**
-     * Respond with an error message.
+     * Respond with an error JSON response.
      *
      * @param string $message
      * @param int $statusCode

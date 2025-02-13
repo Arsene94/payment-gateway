@@ -17,7 +17,10 @@ class OrderController extends Controller
     const PAYMENT_METHOD = 'card_visa';
 
     /**
-     * Create a new order and associated transaction.
+     * Create a new order along with its associated transaction.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return \Illuminate\Http\JsonResponse
      */
     public function store(Request $request)
     {
@@ -26,51 +29,54 @@ class OrderController extends Controller
         $order = $this->createOrder($request->input('amount'));
         $this->createTransaction($order);
 
-        return response()->json(['message' => 'Order created successfully!']);
+        return $this->buildResponse('success', 'Order created successfully!');
     }
 
     /**
-     * Process payment for a given order.
+     * Process the payment for the specified order.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @param int $id
+     * @return \Illuminate\Http\JsonResponse
      */
-    public function processPayment(Request $request, $id)
+    public function processPayment(Request $request, int $id)
     {
-
         $order = Order::with('transaction')->findOrFail($id);
-
         $transaction = $order->transaction;
+
         $paymentData = $this->preparePaymentData($order);
 
         try {
             $token = $request->header('Authorization');
+
             $response = $this->makePaymentRequest($token, $paymentData);
 
             if ($response->successful()) {
                 $this->handleSuccessfulPayment($order, $transaction, $response);
-                return buildResponse('success', 'Payment processed successfully.');
+                return $this->buildResponse('success', 'Payment processed successfully.');
             }
 
             $this->retryPaymentLater($order, $paymentData);
         } catch (\Exception $e) {
             $this->handleFailedPayment($order, $transaction, $e);
-            return buildResponse('error', 'An error occurred: ' . $e->getMessage(), 500);
+            return $this->buildResponse('error', 'An error occurred: ' . $e->getMessage(), 500);
         }
     }
 
     /**
-     * Validate the store request.
+     * Validate the request data for creating an order.
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return void
      */
     protected function validateOrder(Request $request)
     {
         $rules = [
-            'amount' => [
-                'required',
-                'string',
-                'regex:/^[A-Za-z$]{1,3}\d+$/',
-            ],
+            'amount' => 'required|string|regex:/^[A-Za-z$]{1,3}\d+$/',
         ];
 
         $messages = [
-            'amount.regex' => 'Amount format should be in the format of $100 or RON5000.00',
+            'amount.regex' => 'The amount format should be like $100 or RON5000.00.',
         ];
 
         $request->validate($rules, $messages);
@@ -78,6 +84,9 @@ class OrderController extends Controller
 
     /**
      * Create a new order.
+     *
+     * @param string $amount
+     * @return \App\Models\Order
      */
     protected function createOrder(string $amount): Order
     {
@@ -89,7 +98,10 @@ class OrderController extends Controller
     }
 
     /**
-     * Create a new transaction for the given order.
+     * Create a new transaction for the order.
+     *
+     * @param \App\Models\Order $order
+     * @return void
      */
     protected function createTransaction(Order $order)
     {
@@ -101,7 +113,10 @@ class OrderController extends Controller
     }
 
     /**
-     * Prepare payment data based on the order.
+     * Prepare payment data from the order for the payment request.
+     *
+     * @param \App\Models\Order $order
+     * @return array
      */
     protected function preparePaymentData(Order $order): array
     {
@@ -114,7 +129,11 @@ class OrderController extends Controller
     }
 
     /**
-     * Make the payment request to the provider.
+     * Make the payment request to the third-party payment provider.
+     *
+     * @param string $token
+     * @param array $paymentData
+     * @return \Illuminate\Http\Client\Response
      */
     protected function makePaymentRequest(string $token, array $paymentData)
     {
@@ -128,22 +147,32 @@ class OrderController extends Controller
     }
 
     /**
-     * Handle successful payment updates.
-     */
-    /**
-     * Handle successful payment updates.
+     * Handle a successful payment.
+     *
+     * @param \App\Models\Order $order
+     * @param \App\Models\Transaction $transaction
+     * @param \Illuminate\Http\Client\Response $response
+     * @return void
      */
     protected function handleSuccessfulPayment(Order $order, Transaction $transaction, $response)
     {
-        $transaction->response_data = $response->json();
-        $transaction->status = OrderStatusEnum::PAID->value;
-        $transaction->save();
+        $transaction->update([
+            'response_data' => $response->json(),
+            'status' => OrderStatusEnum::PAID->value,
+        ]);
 
-        $order->update(['status' => OrderStatusEnum::PAID->value]);
+        $order->update([
+            'status' => OrderStatusEnum::PAID->value,
+        ]);
     }
 
     /**
-     * Handle failed payment and retry later.
+     * Handle a failed payment and retry later.
+     *
+     * @param \App\Models\Order $order
+     * @param \App\Models\Transaction $transaction
+     * @param \Exception $exception
+     * @return void
      */
     protected function handleFailedPayment(Order $order, Transaction $transaction, \Exception $exception)
     {
@@ -154,19 +183,42 @@ class OrderController extends Controller
 
         $this->retryPaymentLater($order, $this->preparePaymentData($order));
 
-        $transaction->response_data = $exception->getMessage();
-        $transaction->status = OrderStatusEnum::FAILED->value;
-        $transaction->save();
+        $transaction->update([
+            'response_data' => $exception->getMessage(),
+            'status' => OrderStatusEnum::FAILED->value,
+        ]);
 
-        $order->update(['status' => OrderStatusEnum::FAILED->value]);
+        $order->update([
+            'status' => OrderStatusEnum::FAILED->value,
+        ]);
     }
 
     /**
-     * Retry payment later by dispatching a delayed job.
+     * Retry payment by dispatching a payment job for delayed processing.
+     *
+     * @param \App\Models\Order $order
+     * @param array $paymentData
+     * @return void
      */
     protected function retryPaymentLater(Order $order, array $paymentData)
     {
-        Log::info('Payment failed, retrying later...', ['order_id' => $order->id]);
+        Log::info('Payment failed, scheduling retry...', ['order_id' => $order->id]);
         ProcessPaymentJob::dispatch($order, $paymentData)->delay(now()->addMinutes(5));
+    }
+
+    /**
+     * Build a consistent JSON response.
+     *
+     * @param string $status
+     * @param string $message
+     * @param int $statusCode
+     * @return \Illuminate\Http\JsonResponse
+     */
+    protected function buildResponse(string $status, string $message, int $statusCode = 200)
+    {
+        return response()->json([
+            'status' => $status,
+            'message' => $message,
+        ], $statusCode);
     }
 }
