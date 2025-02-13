@@ -137,9 +137,7 @@ class OrderController extends Controller
      */
     protected function makePaymentRequest(string $token, array $paymentData)
     {
-        return Http::timeout(50)
-            ->retry(2, 10000)
-            ->withHeaders([
+        return Http::withHeaders([
                 'Content-Type' => 'application/json',
                 'Authorization' => $token,
             ])

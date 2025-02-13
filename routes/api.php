@@ -24,4 +24,4 @@ Route::group([
     Route::post('/mock-stripe/charge', [MockStripeController::class, 'handleWebhook'])->middleware('throttle:10,1')->name('mock-stripe.charge');
 
     // Transactions API Endpoint
-});
+})->middleware('throttle:api');
