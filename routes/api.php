@@ -20,8 +20,11 @@ Route::group([
 
     // Orders API Endpoints
     Route::post('orders', [OrderController::class, 'store']);
+    Route::get('orders/{id}', [OrderController::class, 'show']);
     Route::post('orders/{id}/pay', [OrderController::class, 'processPayment']);
     Route::post('/mock-stripe/charge', [MockStripeController::class, 'handleWebhook'])->middleware('throttle:10,1')->name('mock-stripe.charge');
 
     // Transactions API Endpoint
+    Route::get('transactions/{id}', [OrderController::class, 'showTransaction']);
+
 })->middleware('throttle:api');

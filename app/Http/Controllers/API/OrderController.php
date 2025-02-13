@@ -4,6 +4,8 @@ namespace App\Http\Controllers\API;
 
 use App\Enums\OrderStatusEnum;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\OrderResource;
+use App\Http\Resources\TransactionResource;
 use App\Jobs\ProcessPaymentJob;
 use App\Models\Order;
 use App\Models\Transaction;
@@ -30,6 +32,18 @@ class OrderController extends Controller
         $this->createTransaction($order);
 
         return $this->buildResponse('success', 'Order created successfully!');
+    }
+
+    public function show(int $id) {
+        $order = Order::with('user')->findOrFail($id);
+
+        return new OrderResource($order);
+    }
+
+    public function showTransaction(int $id) {
+        $transaction = Transaction::with('order')->findOrFail($id);
+
+        return new TransactionResource($transaction);
     }
 
     /**
